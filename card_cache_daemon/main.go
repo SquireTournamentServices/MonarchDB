@@ -26,13 +26,13 @@ type Config struct {
 type Card struct {
 	OracleId       string `json:"uuid"`
 	CardName       string `json:"name"`
-	OracleText     string `json:"text,omitempty"`
+	OracleText     string `json:"oracle_text,omitempty"`
 	scryfallUri    string
 	Colour         []string  `json:"colors"`
-	ColourIdentity []string  `json:"colorIdentity"`
+	ColourIdentity []string  `json:"color_identity"`
 	Type           string  `json:"types"`
-	Cmc            float64 `json:"convertedManaCost"`
-	ManaCost       string  `json:"manaCost,omitempty"`
+	Cmc            float64 `json:"cmc"`
+	ManaCost       string  `json:"mana_cost,omitempty"`
 }
 
 /*
@@ -68,8 +68,15 @@ func connect(config Config) (*sql.DB, error) {
 	return db, err
 }
 
+const INSERT_CARD_SQL=""
+
 func insert_cards(_ *sql.DB, _ Config, data []Card) error {
-	// Get local cache
+  // Get all cards in local cache and add to a map
+
+  // Iterate over all cards in the database and insert/update if needed.
+	for i := 0; i < len(data); i++ {
+		
+	}
 	log.Println(data)
 
 	return nil
