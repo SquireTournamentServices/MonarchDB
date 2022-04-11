@@ -15,6 +15,10 @@ import (
 	"time"
 )
 
+const MDFC = "modal_dfc"
+const FLIP = "flip"
+const TRANSFORM = "transform"
+
 type Config struct {
 	dbName     string
 	dbPassword string
@@ -24,20 +28,29 @@ type Config struct {
 }
 
 type Card struct {
-	OracleId       string `json:"uuid"`
-	CardName       string `json:"name"`
-	OracleText     string `json:"oracle_text,omitempty"`
+	OracleId       string   `json:"uuid"`
+	CardName       string   `json:"name"`
+	OracleText     string   `json:"text,omitempty"`
+	Latouts        string `json:"layout,omitempty"`
 	scryfallUri    string
-	Colour         []string  `json:"colors"`
-	ColourIdentity []string  `json:"color_identity"`
-	Type           string  `json:"types"`
-	Cmc            float64 `json:"cmc"`
-	ManaCost       string  `json:"mana_cost,omitempty"`
+	Colour         []string `json:"colors"`
+	ColourIdentity []string `json:"colorIdentity"`
+	Type           string   `json:"types"`
+	Cmc            float64  `json:"convertedManaCost"`
+	ManaCost       string   `json:"manaCost,omitempty"`
+}
+
+type Set struct {
+	Cards []Card `json:"cards"`
+}
+
+type AllPrintings struct {
+	Sets map[string]Set `json:"data"`
 }
 
 /*
 create table cards (
-oracle_id uuid primary key,
+cardid uuid primary key,
 scryfall_uri varchar(512) not null,
 card_name varchar(255) not null,
 color varchar(255) not null,
@@ -48,8 +61,8 @@ mana_cost varchar(255) not null,
 oracle_text varchar(1024) not null
 );
 */
-
-const JSON_URI="https://c2.scryfall.com/file/scryfall-bulk/oracle-cards/oracle-cards-20220403090406.json"
+const SQL_GET_CARDS = "select (cardid) from cards;"
+const JSON_URI = "https://mtgjson.com/api/v5/AllPrintings.json"
 
 func getScryfallUri(card Card) string {
 	nameenc := url.QueryEscape(card.CardName)
@@ -58,7 +71,7 @@ func getScryfallUri(card Card) string {
 
 func connect(config Config) (*sql.DB, error) {
 	db, err := sql.Open("postgres",
-		fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
+		fmt.Sprintf("postgres://%s:%s@%s:%s/%s",
 			config.dbUsername,
 			config.dbPassword,
 			config.dbUrl,
@@ -68,16 +81,39 @@ func connect(config Config) (*sql.DB, error) {
 	return db, err
 }
 
-const INSERT_CARD_SQL=""
+const INSERT_CARD_SQL = ""
 
-func insert_cards(_ *sql.DB, _ Config, data []Card) error {
-  // Get all cards in local cache and add to a map
+func insert_cards(db *sql.DB, _ Config, data []Card) error {
+	// Get all cards in local cache and add to a map
+	var oracleIdMap map[string]bool
+	oracleIdMap = make(map[string]bool)
 
-  // Iterate over all cards in the database and insert/update if needed.
-	for i := 0; i < len(data); i++ {
-		
+	rows, err := db.Query(SQL_GET_CARDS)
+	if err != nil {
+		log.Println(err)
+		return err
 	}
-	log.Println(data)
+	defer rows.Close()
+
+	for rows.Next() {
+		var oracleId string
+		rows.Scan(&oracleId)
+		oracleIdMap[oracleId] = true
+	}
+
+	// Iterate over all cards in the database and insert/update if needed.
+	inserts := 0
+	//updates := 0
+
+	for i := 0; i < len(data); i++ {
+		_, inMap := oracleIdMap[data[i].OracleId]
+		if !inMap {
+			log.Printf("Inserting %s\n", data[i].CardName)
+			inserts++
+
+			// Insert
+		}
+	}
 
 	return nil
 }
@@ -110,7 +146,7 @@ func update_internal(db *sql.DB, config Config) bool {
 	log.Printf("Download finished, body length: %d\n", len(body))
 	log.Println("Parsing cards...")
 
-	var data []Card
+	var data AllPrintings
 	err = json.Unmarshal(body, &data)
 	if err != nil {
 		log.Println(err)
@@ -118,9 +154,18 @@ func update_internal(db *sql.DB, config Config) bool {
 		return false
 	}
 
-	err = insert_cards(db, config, data)
-	if err != nil {
-		return false
+  log.Printf("Found %d sets\n", len(data.Sets))
+  log.Println("Inserting / updating cards")
+
+	i := 0
+	for key, val := range data.Sets {
+		log.Printf("Processing %s - %d/%d\n", key, i, len(data.Sets))
+		err = insert_cards(db, config, val.Cards)
+		if err != nil {
+			return false
+		}
+
+		i += 1
 	}
 
 	return true
