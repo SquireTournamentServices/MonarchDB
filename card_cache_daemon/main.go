@@ -18,6 +18,12 @@ import (
 const MDFC = "modal_dfc"
 const FLIP = "flip"
 const TRANSFORM = "transform"
+const ACCEPTED_FACE = ""
+
+// this or empty string are valid,
+// all cards that have invalid faces are put into a queue and then they are added to the
+// card oracle at the end. to make sure they are unique a composite key in a map is used
+// of `name + face`
 
 type Config struct {
 	dbName     string
@@ -28,16 +34,17 @@ type Config struct {
 }
 
 type Card struct {
-	OracleId       string   `json:"uuid"`
-	CardName       string   `json:"name"`
-	OracleText     string   `json:"text,omitempty"`
+	OracleId       string `json:"uuid"`
+	CardName       string `json:"name"`
+	OracleText     string `json:"text,omitempty"`
 	Latouts        string `json:"layout,omitempty"`
 	scryfallUri    string
 	Colour         []string `json:"colors"`
 	ColourIdentity []string `json:"colorIdentity"`
-	Type           string   `json:"types"`
+	Type           []string `json:"types"`
 	Cmc            float64  `json:"convertedManaCost"`
 	ManaCost       string   `json:"manaCost,omitempty"`
+	Face           string   `json:"face,omitempty"`
 }
 
 type Set struct {
@@ -84,9 +91,9 @@ func connect(config Config) (*sql.DB, error) {
 const INSERT_CARD_SQL = ""
 
 func insert_cards(db *sql.DB, _ Config, data []Card) error {
+	log.Println("Syncing card database")
 	// Get all cards in local cache and add to a map
-	var oracleIdMap map[string]bool
-	oracleIdMap = make(map[string]bool)
+	var oracleIdMap map[string]bool = make(map[string]bool)
 
 	rows, err := db.Query(SQL_GET_CARDS)
 	if err != nil {
@@ -97,13 +104,24 @@ func insert_cards(db *sql.DB, _ Config, data []Card) error {
 
 	for rows.Next() {
 		var oracleId string
-		rows.Scan(&oracleId)
+		err = rows.Scan(&oracleId)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
 		oracleIdMap[oracleId] = true
 	}
 
+	err = rows.Err()
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	log.Println("Performing updates")
 	// Iterate over all cards in the database and insert/update if needed.
 	inserts := 0
-	//updates := 0
+	updates := 0
 
 	for i := 0; i < len(data); i++ {
 		_, inMap := oracleIdMap[data[i].OracleId]
@@ -112,8 +130,13 @@ func insert_cards(db *sql.DB, _ Config, data []Card) error {
 			inserts++
 
 			// Insert
-		}
+		} /*else {
+		  // Check for update
+		  card := oracleIdMap[data[i].OracleId]
+		}*/
 	}
+
+	log.Printf("Inserted %d cards, Updated %d cards\n", inserts, updates)
 
 	return nil
 }
@@ -154,18 +177,36 @@ func update_internal(db *sql.DB, config Config) bool {
 		return false
 	}
 
-  log.Printf("Found %d sets\n", len(data.Sets))
-  log.Println("Inserting / updating cards")
+	log.Printf("Found %d sets\n", len(data.Sets))
+	log.Println("Merging identical cards...\n")
 
+	var cards_map map[string]Card = make(map[string]Card)
 	i := 0
 	for key, val := range data.Sets {
 		log.Printf("Processing %s - %d/%d\n", key, i, len(data.Sets))
-		err = insert_cards(db, config, val.Cards)
-		if err != nil {
-			return false
+		for _, card := range val.Cards {
+			_, found := cards_map[card.CardName]
+			if !found {
+				if card.Face == ACCEPTED_FACE {
+					cards_map[card.CardName] = card
+				}
+			}
 		}
 
 		i += 1
+	}
+
+	var cards []Card = make([]Card, 0)
+	for _, val := range cards_map {
+		val.scryfallUri = getScryfallUri(val)
+		cards = append(cards, val)
+	}
+
+	log.Println("Inserting / updating cards")
+
+	err = insert_cards(db, config, cards)
+	if err != nil {
+		return false
 	}
 
 	return true
@@ -200,6 +241,7 @@ const VERSION = "V1.0.0"
 func main() {
 	fmt.Println("Loading MonarchDB Card Cache Daemon")
 	fmt.Printf(" -> Version %s | Repo %s\n", VERSION, REPO)
+	fmt.Println(" -> Licenced under GPL 3 for use freely by all :)")
 
 	// Get environment
 	godotenv.Load()
@@ -231,7 +273,6 @@ func main() {
 		dbUrl:      dburl,
 		dbPort:     dbport}
 
-	fmt.Printf("Configuration: %s\n", config)
 	fmt.Println("Testing database connection...")
 
 	db, err := connect(config)
