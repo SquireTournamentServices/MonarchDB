@@ -1,16 +1,34 @@
 /* Card cache */
+create table types (
+	type_filtered varchar(255) primary key,
+  type varchar(255)
+);
+
 create table cards (
   oracle_id uuid primary key,
   scryfall_uri varchar(512) not null,
   card_name varchar(255) not null unique,
   filtered_name varchar(255) not null,
-  color varchar(255) not null,
-  color_identity varchar(255) not null,
-  type varchar(255) not null,
   cmc double precision not null,
   mana_cost varchar(255) not null,
   oracle_text varchar(1024) not null
 );
+
+create table card_types (
+	oracle_id uuid not null references(cards.oracle_id),
+  type_filtered varchar(255) not null references(types.type_filtered),
+  unique(oracle_id, type_filtered)
+);
+
+create table card_colors {
+	oracle_id uuid not null references(cards.oracle_id),
+	color varchar(5) not null
+};
+
+create table card_identity_colors {
+	oracle_id uuid not null references(cards.oracle_id),
+	color varchar(5) not null
+};
 
 create table sets (
 	set_id uuid primary key,
