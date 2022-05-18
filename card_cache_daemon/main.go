@@ -88,7 +88,8 @@ func connect(config Config) (*sql.DB, error) {
 	return db, err
 }
 
-const INSERT_CARD_SQL = ""
+const INSERT_CARD_SQL = "insert (cardid, scryfall_uri, card_name, color, color_identity, type, cmc, mana_cost, oracle_text into cards values ($1, $2, $3, $4, $5, $6, $7, $8 ,$9);"
+const UPDATE_CARD_SQL = "update cards set scryfall_uri=$1, card_name=$2, color=$3, color_identity=$4, type=$5, cmc=$6, mana_cost=$7, oracle_text=$8;"
 
 func insert_cards(db *sql.DB, _ Config, data []Card) error {
 	log.Println("Syncing card database")
