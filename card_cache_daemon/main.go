@@ -15,11 +15,6 @@ import (
 	"time"
 )
 
-const MDFC = "modal_dfc"
-const FLIP = "flip"
-const TRANSFORM = "transform"
-const ACCEPTED_FACE = ""
-
 // this or empty string are valid,
 // all cards that have invalid faces are put into a queue and then they are added to the
 // card oracle at the end. to make sure they are unique a composite key in a map is used
@@ -68,8 +63,19 @@ mana_cost varchar(255) not null,
 oracle_text varchar(1024) not null
 );
 */
-const SQL_GET_CARDS = "select (cardid) from cards;"
+const INSERT_CARD_SQL = "insert (cardid, scryfall_uri, card_name, color, color_identity, type, cmc, mana_cost, oracle_text, filtered_name into cards values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);"
+const UPDATE_CARD_SQL = "update cards set scryfall_uri=$2, card_name=$3, color=$4, color_identity=$5, type=$6, cmc=$7, mana_cost=$8, oracle_text=$9, filtered_name=$10 where cardid=$1;"
+const SQL_GET_CARDS = "select (cardid) from cards limit 100 offset=%d;"
+
 const JSON_URI = "https://mtgjson.com/api/v5/AllPrintings.json"
+const MDFC = "modal_dfc"
+const FLIP = "flip"
+const TRANSFORM = "transform"
+const ACCEPTED_FACE = ""
+const WAIT_TIME = time.Millisecond * 1000 * 60 * 60 * 12
+const REPO = "https://github.com/MonarchDevelopment/MonarchDB"
+const VERSION = "V1.0.0"
+const MAX = 10
 
 func getScryfallUri(card Card) string {
 	nameenc := url.QueryEscape(card.CardName)
@@ -88,35 +94,63 @@ func connect(config Config) (*sql.DB, error) {
 	return db, err
 }
 
-const INSERT_CARD_SQL = "insert (cardid, scryfall_uri, card_name, color, color_identity, type, cmc, mana_cost, oracle_text into cards values ($1, $2, $3, $4, $5, $6, $7, $8 ,$9);"
-const UPDATE_CARD_SQL = "update cards set scryfall_uri=$1, card_name=$2, color=$3, color_identity=$4, type=$5, cmc=$6, mana_cost=$7, oracle_text=$8;"
+func filter_card_name(name string) string {
+	ret := ""
+	for i := range name {
+		c := name[i]
+		if c == 'û' {
+			ret += "u"
+		} else if c >= 'A' && c <= 'Z' {
+			ret += string(c - 'A' + 'a')
+		} else if c >= 'a' && c <= 'z' {
+			ret += string(c)
+		}
+	}
+
+	return ret
+}
+
+func fix_colours(c []string) string {
+	ret := ""
+	for i := range c {
+		ret += c[i]
+	}
+	return ret
+}
 
 func insert_cards(db *sql.DB, _ Config, data []Card) error {
 	log.Println("Syncing card database")
 	// Get all cards in local cache and add to a map
 	var oracleIdMap map[string]bool = make(map[string]bool)
+	tmp := 0
+	i := 1
 
-	rows, err := db.Query(SQL_GET_CARDS)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var oracleId string
-		err = rows.Scan(&oracleId)
+	for tmp != 0 {
+		tmp := 0
+		rows, err := db.Query(fmt.Sprintf(SQL_GET_CARDS, 100*i))
 		if err != nil {
 			log.Println(err)
 			return err
 		}
-		oracleIdMap[oracleId] = true
-	}
+		defer rows.Close()
 
-	err = rows.Err()
-	if err != nil {
-		log.Println(err)
-		return err
+		for rows.Next() {
+			var oracleId string
+			err = rows.Scan(&oracleId)
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			oracleIdMap[oracleId] = true
+			i++
+			tmp++
+		}
+
+		err = rows.Err()
+		if err != nil {
+			log.Println(err)
+			return err
+		}
 	}
 
 	log.Println("Performing updates")
@@ -124,17 +158,26 @@ func insert_cards(db *sql.DB, _ Config, data []Card) error {
 	inserts := 0
 	updates := 0
 
+	stmt, err := db.Prepare(INSERT_CARD_SQL)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	defer stmt.Close()
+
 	for i := 0; i < len(data); i++ {
 		_, inMap := oracleIdMap[data[i].OracleId]
 		if !inMap {
 			log.Printf("Inserting %s\n", data[i].CardName)
 			inserts++
 
+			card := data[i]
 			// Insert
-		} /*else {
-		  // Check for update
-		  card := oracleIdMap[data[i].OracleId]
-		}*/
+			_, err = stmt.Exec(card.OracleId, card.CardName, card.scryfallUri, fix_colours(card.Colour), fix_colours(card.ColourIdentity), card.Type, card.Cmc, card.ManaCost, card.OracleText)
+		} else {
+			// Check for update
+			//update_if_different(db, card)
+		}
 	}
 
 	log.Printf("Inserted %d cards, Updated %d cards\n", inserts, updates)
@@ -213,8 +256,6 @@ func update_internal(db *sql.DB, config Config) bool {
 	return true
 }
 
-const MAX = 10
-
 func update(db *sql.DB, config Config) {
 	i := int(0)
 	for i < MAX {
@@ -235,14 +276,13 @@ func update(db *sql.DB, config Config) {
 	}
 }
 
-const WAIT_TIME = time.Millisecond * 1000 * 60 * 60 * 12
-const REPO = "https://github.com/MonarchDevelopment/MonarchDB"
-const VERSION = "V1.0.0"
-
 func main() {
+	log.SetFlags(log.Llongfile | log.Ldate | log.Ltime | log.Lmicroseconds)
+
 	fmt.Println("Loading MonarchDB Card Cache Daemon")
 	fmt.Printf(" -> Version %s | Repo %s\n", VERSION, REPO)
 	fmt.Println(" -> Licenced under GPL 3 for use freely by all :)")
+	fmt.Println(" -> For database schema information and help do visit the repo")
 
 	// Get environment
 	godotenv.Load()
