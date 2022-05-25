@@ -50,22 +50,11 @@ type AllPrintings struct {
 	Sets map[string]Set `json:"data"`
 }
 
-/*
-create table cards (
-cardid uuid primary key,
-scryfall_uri varchar(512) not null,
-card_name varchar(255) not null,
-color varchar(255) not null,
-color_identity varchar(255) not null,
-type varchar(255) not null,
-cmc double precision not null,
-mana_cost varchar(255) not null,
-oracle_text varchar(1024) not null
-);
-*/
-const INSERT_CARD_SQL = "insert (cardid, scryfall_uri, card_name, color, color_identity, type, cmc, mana_cost, oracle_text, filtered_name into cards values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);"
+const INSERT_CARD_SQL = "insert into cards (cardid, scryfall_uri, card_name, color, color_identity, type, cmc, mana_cost, oracle_text, filtered_name) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);"
+const INSERT_TYPE_SQL = "insert into types (type_filtered, type) values ($1, $2);"
+const INSERT_CARD_TYPE_SQL = "insert into card_types (oracle_id, type_filtered) values ($1, $2);"
 const UPDATE_CARD_SQL = "update cards set scryfall_uri=$2, card_name=$3, color=$4, color_identity=$5, type=$6, cmc=$7, mana_cost=$8, oracle_text=$9, filtered_name=$10 where cardid=$1;"
-const SQL_GET_CARDS = "select (cardid) from cards limit 100 offset=%d;"
+const SQL_GET_CARDS = "select (cardid) from cards limit 100 offset %d;"
 
 const JSON_URI = "https://mtgjson.com/api/v5/AllPrintings.json"
 const MDFC = "modal_dfc"
@@ -142,7 +131,6 @@ func insert_cards(db *sql.DB, _ Config, data []Card) error {
 				return err
 			}
 			oracleIdMap[oracleId] = true
-			i++
 			tmp++
 		}
 
@@ -151,6 +139,7 @@ func insert_cards(db *sql.DB, _ Config, data []Card) error {
 			log.Println(err)
 			return err
 		}
+		i++
 	}
 
 	log.Println("Performing updates")
@@ -321,7 +310,6 @@ func main() {
 		panic("Cannot connect to the database")
 	}
 
-	log.SetFlags(2 | 3)
 	log.Println("Connection successful, starting daemon.")
 
 	lastupdate := time.Now()
